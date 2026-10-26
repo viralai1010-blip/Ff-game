@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>النجاة من الزومبي - 2D</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #000; touch-action: none; font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; right: 10px; color: white; font-size: 20px; font-weight: bold; pointer-events: none; display: flex; justify-content: space-between; text-shadow: 2px 2px 4px #000; }
+        #gameOver { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.9); color: white; padding: 20px; border-radius: 15px; text-align: center; display: none; border: 2px solid #e94560; width: 80%; max-width: 300px; }
+        #gameOver h1 { margin: 0 0 10px 0; font-size: 24px; color: #e94560; }
+        #gameOver p { margin: 0 0 15px 0; font-size: 16px; }
+        button { padding: 12px 20px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; margin: 5px; width: 100%; font-weight: bold; }
+        #restartBtn { background: #555; color: white; }
+        #adBtn { background: #00c851; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #adOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: black; color: white; display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 100; font-size: 24px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div>❤️ الصحة: <span id="hp">100</span></div>
+        <div>💀 النقاط: <span id="score">0</span></div>
+    </div>
+    <div id="gameOver">
+        <h1>انتهت اللعبة!</h1>
+        <p>الزومبي قتلوك 😢</p>
+        <button id="adBtn" onclick="watchAd()">📺 مشاهدة إعلان للمتابعة</button>
+        <button id="restartBtn" onclick="restartGame()">إعادة اللعب من الصفر</button>
+    </div>
+    <div id="adOverlay">
+        <div>جاري تحميل الإعلان... 📺</div>
+        <div id="adTimer" style="margin-top: 20px; font-size: 40px;">3</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const hpEl = document.getElementById('hp');
+        const scoreEl = document.getElementById('score');
+        const gameOverEl = document.getElementById('gameOver');
+        const adOverlay = document.getElementById('adOverlay');
+        const adTimerEl = document.getElementById('adTimer');
+
+        let width, height;
+        let player = { x: 0, y: 0, w: 40, h: 40, hp: 100, speed: 4 };
+        let zombies = [];
+        let bullets = [];
+        let score = 0;
+        let isGameOver = false;
+        let spawnInterval, gameLoopInterval;
+        
+        // تحميل الصور
+        const imgPlayer = new Image(); imgPlayer.crossOrigin = "Anonymous";
+        const imgZombie = new Image(); imgZombie.crossOrigin = "Anonymous";
+        const imgBg = new Image(); imgBg.crossOrigin = "Anonymous";
+
+        // روابط صور حقيقية
+        imgPlayer.src = "https://cdn-icons-png.flaticon.com/512/3039/3039434.png"; // جندي
+        imgZombie.src = "https://cdn-icons-png.flaticon.com/512/3653/3653370.png"; // زومبي
+        imgBg.src = "https://images.unsplash.com/photo-1508614999368-9260051292e5?ixlib=rb-1.2.1&auto=format&fit=crop&w=1000&q=80"; // أرض عشبية
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            player.x = width / 2 - player.w / 2;
+            player.y = height / 2 - player.h / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        let touchStartX = 0, touchStartY = 0, touchCurrentX = 0, touchCurrentY = 0, isTouching = false;
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (isGameOver) return;
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            touchStartX = e.touches[0].clientX - rect.left;
+            touchStartY = e.touches[0].clientY - rect.top;
+            touchCurrentX = touchStartX;
+            touchCurrentY = touchStartY;
+            isTouching = true;
+            shootBullet(touchStartX, touchStartY);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!isTouching || isGameOver) return;
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            touchCurrentX = e.touches[0].clientX - rect.left;
+            touchCurrentY = e.touches[0].clientY - rect.top;
+        });
+
+        canvas.addEventListener('touchend', () => { isTouching = false; });
+
+        function shootBullet(targetX, targetY) {
+            let angle = Math.atan2(targetY - (player.y + player.h/2), targetX - (player.x + player.w/2));
+            bullets.push({
+                x: player.x + player.w/2, y: player.y + player.h/2,
+                vx: Math.cos(angle) * 15, vy: Math.sin(angle) * 15,
+                radius: 4
+            });
+        }
+
+        function spawnZombie() {
+            if (isGameOver) return;
+            let side = Math.floor(Math.random() * 4);
+            let x, y, size = 40;
+            if (side === 0) { x = Math.random() * width; y = -size; }
+            else if (side === 1) { x = width; y = Math.random() * height; }
+            else if (side === 2) { x = Math.random() * width; y = height; }
+            else { x = -size; y = Math.random() * height; }
+            
+            zombies.push({ x: x, y: y, w: size, h: size, speed: 1.5 + Math.random() * 1.5, hp: 1 });
+        }
+
+        function update() {
+            if (isGameOver) return;
+
+            // حركة اللاعب
+            if (isTouching) {
+                let dx = touchCurrentX - touchStartX;
+                let dy = touchCurrentY - touchStartY;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist > 5) {
+                    player.x += (dx / dist) * player.speed;
+                    player.y += (dy / dist) * player.speed;
+                }
+            }
+
+            player.x = Math.max(0, Math.min(width - player.w, player.x));
+            player.y = Math.max(0, Math.min(height - player.h, player.y));
+
+            // تحديث الرصاصات
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                let b = bullets[i];
+                b.x += b.vx; b.y += b.vy;
+                if (b.x < 0 || b.x > width || b.y < 0 || b.y > height) { bullets.splice(i, 1); continue; }
+                for (let j = zombies.length - 1; j >= 0; j--) {
+                    let z = zombies[j];
+                    if (b.x > z.x && b.x < z.x + z.w && b.y > z.y && b.y < z.y + z.h) {
+                        zombies.splice(j, 1); bullets.splice(i, 1);
+                        score += 10; scoreEl.innerText = score;
+                        break;
+                    }
+                }
+            }
+
+            // تحديث الزومبي
+            for (let i = zombies.length - 1; i >= 0; i--) {
+                let z = zombies[i];
+                let angle = Math.atan2(player.y + player.h/2 - (z.y + z.h/2), player.x + player.w/2 - (z.x + z.w/2));
+                z.x += Math.cos(angle) * z.speed;
+                z.y += Math.sin(angle) * z.speed;
+
+                if (z.x < player.x + player.w && z.x + z.w > player.x && z.y < player.y + player.h && z.y + z.h > player.y) {
+                    zombies.splice(i, 1);
+                    player.hp -= 15; hpEl.innerText = player.hp;
+                    if (player.hp <= 0) gameOver();
+                }
+            }
+            draw();
+        }
+
+        function draw() {
+            // رسم الخلفية
+            if (imgBg.complete) {
+                ctx.drawImage(imgBg, 0, 0, width, height);
+            } else {
+                ctx.fillStyle = '#2d4a22'; ctx.fillRect(0, 0, width, height);
+            }
+            
+            // رسم اللاعب
+            if (imgPlayer.complete) {
+                ctx.drawImage(imgPlayer, player.x, player.y, player.w, player.h);
+            } else {
+                ctx.fillStyle = '#00ffcc'; ctx.fillRect(player.x, player.y, player.w, player.h);
+            }
+
+            // رسم الزومبي
+            zombies.forEach(z => {
+                if (imgZombie.complete) {
+                    ctx.drawImage(imgZombie, z.x, z.y, z.w, z.h);
+                } else {
+                    ctx.fillStyle = '#e94560'; ctx.fillRect(z.x, z.y, z.w, z.h);
+                }
+            });
+
+            // رسم الرصاصات
+            ctx.fillStyle = '#ff0';
+            bullets.forEach(b => {
+                ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
+            });
+        }
+
+        function startGame() {
+            player.hp = 100; score = 0; zombies = []; bullets = []; isGameOver = false;
+            player.x = width / 2 - player.w / 2; player.y = height / 2 - player.h / 2;
+            hpEl.innerText = player.hp; scoreEl.innerText = score; gameOverEl.style.display = 'none';
+            adOverlay.style.display = 'none';
+            clearInterval(spawnInterval); clearInterval(gameLoopInterval);
+            spawnInterval = setInterval(spawnZombie, 1000);
+            gameLoopInterval = setInterval(update, 1000 / 60);
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            clearInterval(spawnInterval); clearInterval(gameLoopInterval);
+            gameOverEl.style.display = 'block';
+        }
+
+        function watchAd() {
+            gameOverEl.style.display = 'none';
+            adOverlay.style.display = 'flex';
+            let timeLeft = 3;
+            adTimerEl.innerText = timeLeft;
+            let adCountdown = setInterval(() => {
+                timeLeft--; adTimerEl.innerText = timeLeft;
+                if (timeLeft <= 0) {
+                    clearInterval(adCountdown);
+                    adOverlay.style.display = 'none';
+                    resumeGame();
+                }
+            }, 1000);
+        }
+
+        function resumeGame() {
+            player.hp = 100; hpEl.innerText = player.hp; isGameOver = false; zombies = [];
+            spawnInterval = setInterval(spawnZombie, 1000);
+            gameLoopInterval = setInterval(update, 1000 / 60);
+        }
+
+        function restartGame() { startGame(); }
+        startGame();
+    </script>
+</body>
+</html>
